@@ -1,0 +1,149 @@
+//@version=5
+indicator(title="S/R Zonen mit Spike Range & MACD/RSI Alarmen", shorttitle="S/R Zonen + Spike Range", overlay=true)
+
+// --- Input für Support/Resistance ---
+lookbackLeftSR = input.integer(title="Lookback Links für S/R", defval=10, minval=2)
+lookbackRightSR = input.integer(title="Lookback Rechts für S/R", defval=5, minval=1)
+strengthSR = input.integer(title="Minimale Bars zwischen S/R Punkten", defval=5, minval=1)
+spikeLookback = input.integer(title="Lookback für Spike Range", defval=20, minval=5)
+
+// --- Input für Trendlinien ---
+lookbackLeftTL = input.integer(title="Lookback Links für TL", defval=20, minval=5)
+lookbackRightTL = input.integer(title="Lookback Rechts für TL", defval=10, minval=2)
+minPointsTL = input.integer(title="Minimale Punkte für TL", defval=2, minval=2)
+
+// --- Input für MACD ---
+fastLength = input.integer(title="MACD Fast Length", defval=12)
+slowLength = input.integer(title="MACD Slow Length", defval=26)
+signalLength = input.integer(title="MACD Signal Length", defval=9)
+[macdLine, signalLine, _] = ta.macd(close, fastLength, slowLength, signalLength)
+
+// --- Input für RSI ---
+rsiLength = input.integer(title="RSI Length", defval=14)
+rsiOverbought = input.integer(title="RSI Overbought Level", defval=70)
+rsiOversold = input.integer(title="RSI Oversold Level", defval=30)
+rsiValue = ta.rsi(close, rsiLength)
+
+// --- Farben ---
+colorLastSupport = color.green
+colorPrevSupport1 = color.lime
+colorPrevSupport2 = color.teal
+colorLastResistance = color.red
+colorPrevResistance1 = color.orange
+colorPrevResistance2 = color.maroon
+fillOpacity = input.integer(title="Füllungs-Opazität (%)", defval=20, minval=0, maxval=100) / 100.0
+
+// --- Funktionen zum Finden von Hochs und Tiefs ---
+isPivotHigh(lb, rb) =>
+    high[rb] > high[rb - 1] and high[rb] > high[rb + 1] and high[rb] > ta.highest(high, lb)[lb] and high[rb] > ta.highest(high, rb - 1) and high[rb] > ta.highest(high, rb + 1)
+isPivotLow(lb, rb) =>
+    low[rb] < low[rb - 1] and low[rb] < low[rb + 1] and low[rb] < ta.lowest(low, lb)[lb] and low[rb] < ta.lowest(low, rb - 1) and low[rb] < ta.lowest(low, rb + 1)
+
+// --- Support und Resistance Level finden und zeichnen mit Spike Range ---
+var float[] supportLevels = array.new_float()
+var float[] resistanceLevels = array.new_float()
+
+calculateSpikeRange(level, isResistance) =>
+    var float maxSpike = 0.0
+    var float avgClose = 0.0
+    var int count = 0
+    for i = 0 to spikeLookback
+        if isResistance and high[i] >= level and close[i] <= level or
+           not isResistance and low[i] <= level and close[i] >= level
+            spike = math.abs((isResistance ? high[i] : low[i]) - close[i])
+            maxSpike := math.max(maxSpike, spike)
+            avgClose := avgClose + close[i]
+            count := count + 1
+    if count > 0
+        avgClose := avgClose / count
+        return maxSpike
+    return na
+
+drawZone(level, spikeRange, colorLine, colorFill) =>
+    upperLevel = level + spikeRange
+    lowerLevel = level - spikeRange
+    line.new(bar_index - spikeLookback - 1, level, bar_index, level, extend=extend.right, color=colorLine, width=2)
+    line.new(bar_index - spikeLookback - 1, upperLevel, bar_index, upperLevel, extend=extend.right, color=colorLine, width=1, style=line.style_dotted)
+    line.new(bar_index - spikeLookback - 1, lowerLevel, bar_index, lowerLevel, extend=extend.right, color=colorLine, width=1, style=line.style_dotted)
+    fill(line.get_id(line.new(bar_index - spikeLookback - 1, upperLevel, bar_index, upperLevel, extend=extend.right)),
+         line.get_id(line.new(bar_index - spikeLookback - 1, lowerLevel, bar_index, lowerLevel, extend=extend.right)),
+         color=colorFill, opacity=fillOpacity)
+
+if isPivotLow(lookbackLeftSR, lookbackRightSR)
+    pivotLowPrice = low[lookbackRightSR]
+    canAddSupport = true
+    for level in supportLevels
+        if math.abs(level - pivotLowPrice) < syminfo.mintick * strengthSR
+            canAddSupport := false
+            break
+    if canAddSupport
+        array.unshift(supportLevels, pivotLowPrice)
+        if array.size(supportLevels) > 3
+            array.pop(supportLevels)
+        for i = 0 to array.size(supportLevels) - 1
+            level = array.get(supportLevels, i)
+            spikeRange = calculateSpikeRange(level, false)
+            if not na(spikeRange)
+                colorToUse = switch i
+                    0 => colorLastSupport
+                    1 => colorPrevSupport1
+                    2 => colorPrevSupport2
+                    => color.gray
+                drawZone(level, spikeRange, colorToUse, color.new(colorToUse, 50)) // Halbtransparente Farbe
+            else
+                plot(level, title="Support " + (i + 1), color=color.gray, linewidth=1, style=plot.style_linebr)
+
+if isPivotHigh(lookbackLeftSR, lookbackRightSR)
+    pivotHighPrice = high[lookbackRightSR]
+    canAddResistance = true
+    for level in resistanceLevels
+        if math.abs(level - pivotHighPrice) < syminfo.mintick * strengthSR
+            canAddResistance := false
+            break
+    if canAddResistance
+        array.unshift(resistanceLevels, pivotHighPrice)
+        if array.size(resistanceLevels) > 3
+            array.pop(resistanceLevels)
+        for i = 0 to array.size(resistanceLevels) - 1
+            level = array.get(resistanceLevels, i)
+            spikeRange = calculateSpikeRange(level, true)
+            if not na(spikeRange)
+                colorToUse = switch i
+                    0 => colorLastResistance
+                    1 => colorPrevResistance1
+                    2 => colorPrevResistance2
+                    => color.gray
+                drawZone(level, spikeRange, colorToUse, color.new(colorToUse, 50)) // Halbtransparente Farbe
+            else
+                plot(level, title="Resistance " + (i + 1), color=color.gray, linewidth=1, style=plot.style_linebr)
+
+// --- Trendlinien finden und zeichnen (unverändert) ---
+var line[] upTrendLines = array.new_line()
+var line[] downTrendLines = array.new_line()
+
+findTrendLines(isUpTrend) =>
+    // ... (Trendlinien-Funktion bleibt unverändert)
+findTrendLines(true)
+findTrendLines(false)
+
+// --- MACD und RSI Divergenz erkennen und Alarme auslösen (unverändert) ---
+bullishMacdDivergence = low[1] > low and macdLine[1] < macdLine
+bullishRsiDivergence = low[1] > low and rsiValue[1] < rsiValue and rsiValue < rsiOversold
+bearishMacdDivergence = high[1] < high and macdLine[1] > macdLine
+bearishRsiDivergence = high[1] < high and rsiValue[1] > rsiValue and rsiValue > rsiOverbought
+
+if bullishMacdDivergence
+    alert("Bullische MACD Divergenz erkannt!", alert.freq_once)
+if bullishRsiDivergence
+    alert("Bullische RSI Divergenz erkannt (unter Oversold)!", alert.freq_once)
+if bearishMacdDivergence
+    alert("Bärische MACD Divergenz erkannt!", alert.freq_once)
+if bearishRsiDivergence
+    alert("Bärische RSI Divergenz erkannt (über Overbought)!", alert.freq_once)
+
+// --- Plot der Indikatoren (optional) ---
+plot(macdLine, title="MACD Linie", color=color.blue)
+plot(signalLine, title="Signal Linie", color=color.orange)
+plot(rsiValue, title="RSI", color=color.purple, linewidth=2)
+hline(rsiOverbought, "RSI Overbought", color=color.red, linestyle=hline.style_dotted)
+hline(rsiOversold, "RSI Oversold", color=color.green, linestyle=hline.style_dotted)
